@@ -12,7 +12,8 @@ Node.js 22とpnpmを用意し、次のコマンドを実行します。
 
 ```sh
 pnpm install --frozen-lockfile
+pnpm exec playwright install chromium
 pnpm run test
 ```
 
-実行時依存と開発時依存はありません。Chat／Codexそれぞれの現行モデルと対応する全努力量の56組み合わせ、モード別設定、URLパラメーター、努力量の範囲、Manifest V3の読み込み順をNode.js標準のテストランナーで検証します。
+実行時依存はありません。開発時のみPlaywrightを使用し、実際のChromiumへ拡張機能を読み込んで、Chat／Codexそれぞれの全モデルと努力量の56組み合わせを保存・再読み込み・復元できることを検証します。ログインや外部通信は使わず、ChatGPTと同じURLへローカルの検証画面を割り当てます。URLパラメーターなどの純粋なロジックはNode.js標準のテストランナーで検証します。
