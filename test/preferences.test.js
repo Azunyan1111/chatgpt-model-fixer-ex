@@ -8,8 +8,30 @@ const {
   matchingModel,
   modeName,
   modelSlug,
+  preferenceKey,
+  preferencesForMode,
   preferencesUrl,
 } = require('../preferences');
+
+test('ChatとCodexからそれぞれのモデルと努力量を取得する', () => {
+  const settings = {
+    savedChatEffort: 1,
+    savedChatModel: 'GPT-6 Luna',
+    savedCodexEffort: 4,
+    savedCodexModel: 'GPT-6.1 Sol',
+  };
+
+  assert.deepEqual(preferencesForMode(settings, 'chat'), {
+    savedEffort: 1,
+    savedModel: 'GPT-6 Luna',
+  });
+  assert.deepEqual(preferencesForMode(settings, 'codex'), {
+    savedEffort: 4,
+    savedModel: 'GPT-6.1 Sol',
+  });
+  assert.equal(preferenceKey('chat', 'model'), 'savedChatModel');
+  assert.equal(preferenceKey('codex', 'effort'), 'savedCodexEffort');
+});
 
 test('モデル名をURL用の値へ変換する', () => {
   assert.equal(modelSlug('GPT-6.1 Sol'), 'gpt-6.1-sol');

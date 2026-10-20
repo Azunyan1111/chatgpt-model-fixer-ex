@@ -7,8 +7,8 @@ const preferences = require('../preferences');
 
 const contentScript = readFileSync(`${__dirname}/../content.js`, 'utf8');
 
-// 2026-10-20時点のChatGPT Workモデル選択画面と努力量の範囲です。
-const models = [
+// 2026-10-20時点のChatGPTモデル選択画面と努力量の範囲です。
+const codexModels = [
   { name: 'デフォルト', slug: null, maximumEffort: 5 },
   { name: 'GPT-6.1 Sol', slug: 'gpt-6.1-sol', maximumEffort: 5 },
   { name: 'GPT-6 Astra', slug: 'gpt-6-astra', maximumEffort: 5 },
@@ -17,6 +17,16 @@ const models = [
   { name: 'GPT-5.6 Sol', slug: 'gpt-5.6-sol', maximumEffort: 5 },
   { name: 'GPT-5.6 Terra', slug: 'gpt-5.6-terra', maximumEffort: 5 },
   { name: 'GPT-5.6 Luna', slug: 'gpt-5.6-luna', maximumEffort: 4 },
+];
+
+const chatModels = [
+  { name: 'GPT-6', slug: 'gpt-6', maximumEffort: 4 },
+  { name: 'GPT-5.6 Sol', slug: 'gpt-5.6-sol', maximumEffort: 4 },
+];
+
+const modes = [
+  { label: 'Chat', models: chatModels, value: 'chat' },
+  { label: 'Codex', models: codexModels, value: 'codex' },
 ];
 
 const efforts = [
@@ -41,14 +51,14 @@ function element(textContent, attributes = {}) {
   };
 }
 
-async function runContentScript(model, effort) {
-  const initialModel = model.name === 'デフォルト' ? 'GPT-6.1 Sol' : 'デフォルト';
+async function runContentScript(mode, model, effort) {
+  const initialModel = mode.models.find(({ name }) => name !== model.name).name;
   const initialEffort = effort.value === 0 ? model.maximumEffort : 0;
   const keys = [];
   let complete;
   const completed = new Promise((resolve) => { complete = resolve; });
 
-  const items = models.map(({ name }) => {
+  const items = mode.models.map(({ name }) => {
     const item = element(name, { 'aria-checked': name === initialModel ? 'true' : 'false' });
     item.querySelector = () => ({ textContent: name });
     item.closest = () => null;
@@ -94,11 +104,27 @@ async function runContentScript(model, effort) {
   });
   trigger.dispatchEvent = () => trigger.setAttribute('aria-expanded', 'true');
 
-  const chatButton = element('Chat', { 'aria-pressed': 'false' });
-  const workButton = element('Work', { 'aria-pressed': 'true' });
+  const chatButton = element('Chat', { 'aria-pressed': mode.value === 'codex' ? 'true' : 'false' });
+  const workButton = element('Work', { 'aria-pressed': mode.value === 'chat' ? 'true' : 'false' });
+  chatButton.click = () => {
+    chatButton.setAttribute('aria-pressed', 'true');
+    workButton.setAttribute('aria-pressed', 'false');
+  };
+  workButton.click = () => {
+    chatButton.setAttribute('aria-pressed', 'false');
+    workButton.setAttribute('aria-pressed', 'true');
+  };
   const group = { querySelectorAll: () => [chatButton, workButton] };
-  const search = new URLSearchParams({ surface: 'work' });
+  const search = new URLSearchParams();
+  if (mode.value === 'codex') search.set('surface', 'work');
   if (model.slug) search.set('model', model.slug);
+  const settings = {
+    savedChatEffort: mode.value === 'chat' ? effort.value : 4,
+    savedChatModel: mode.value === 'chat' ? model.name : 'GPT-6',
+    savedCodexEffort: mode.value === 'codex' ? effort.value : 5,
+    savedCodexModel: mode.value === 'codex' ? model.name : 'GPT-6.1 Sol',
+    savedMode: mode.value,
+  };
 
   const context = {
     ChatGPTPreferences: preferences,
@@ -122,11 +148,7 @@ async function runContentScript(model, effort) {
     chrome: {
       storage: {
         local: {
-          get: async () => ({
-            savedEffort: effort.value,
-            savedMode: 'codex',
-            savedModel: model.name,
-          }),
+          get: async () => settings,
           set() {},
         },
       },
@@ -163,20 +185,26 @@ async function runContentScript(model, effort) {
   return {
     effort: Number(slider.getAttribute('aria-valuenow')),
     keys,
+    mode: chatButton.getAttribute('aria-pressed') === 'true' ? 'chat' : 'codex',
     model: items.find((item) => item.getAttribute('aria-checked') === 'true').textContent,
   };
 }
 
-for (const model of models) {
-  for (const effort of efforts.filter(({ value }) => value <= model.maximumEffort)) {
-    test(`${model.name}を${effort.name}へ切り替えられる`, { timeout: 1000 }, async () => {
-      const actual = await runContentScript(model, effort);
+for (const mode of modes) {
+  for (const model of mode.models) {
+    for (const effort of efforts.filter(({ value }) => value <= model.maximumEffort)) {
+      test(`${mode.label}で${model.name}を${effort.name}へ切り替えられる`, {
+        timeout: 1000,
+      }, async () => {
+        const actual = await runContentScript(mode, model, effort);
 
-      assert.equal(actual.model, model.name);
-      assert.equal(actual.effort, effort.value);
-      assert.equal(actual.keys.length, Math.abs(
-        (effort.value === 0 ? model.maximumEffort : 0) - effort.value,
-      ));
-    });
+        assert.equal(actual.mode, mode.value);
+        assert.equal(actual.model, model.name);
+        assert.equal(actual.effort, effort.value);
+        assert.equal(actual.keys.length, Math.abs(
+          (effort.value === 0 ? model.maximumEffort : 0) - effort.value,
+        ));
+      });
+    }
   }
 }

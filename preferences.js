@@ -25,6 +25,19 @@
     return Array.from(items).find((item) => nameOf(item) === target);
   }
 
+  function preferenceKey(mode, setting) {
+    const modeName = mode === 'codex' ? 'Codex' : 'Chat';
+    const settingName = setting === 'effort' ? 'Effort' : 'Model';
+    return `saved${modeName}${settingName}`;
+  }
+
+  function preferencesForMode(settings, mode) {
+    return {
+      savedEffort: settings[preferenceKey(mode, 'effort')] ?? settings.savedEffort,
+      savedModel: settings[preferenceKey(mode, 'model')] ?? settings.savedModel,
+    };
+  }
+
   function preferencesUrl(href, { savedModel, savedMode }) {
     const url = new URL(href);
     if (url.pathname !== '/') return href;
@@ -47,6 +60,8 @@
     matchingModel,
     modeName,
     modelSlug,
+    preferenceKey,
+    preferencesForMode,
     preferencesUrl,
   };
   root.ChatGPTPreferences = preferences;

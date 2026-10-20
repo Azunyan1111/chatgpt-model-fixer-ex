@@ -4,6 +4,8 @@
     effortTarget,
     matchingModel,
     modeName,
+    preferenceKey,
+    preferencesForMode,
     preferencesUrl,
   } = globalThis.ChatGPTPreferences;
   const triggerSelector = 'button[data-codex-intelligence-trigger="true"]';
@@ -12,9 +14,11 @@
   let savedModel;
   let savedEffort;
   let savedMode;
+  let savedSettings = {};
   let previousTrigger;
   let previousUrl;
   let restoring = false;
+  let switchingMode = false;
 
   const normalizedText = (element) => element?.textContent.trim();
 
@@ -31,6 +35,16 @@
 
   function selectedMode() {
     return modeName(modeButtons().find((button) => button.getAttribute('aria-pressed') === 'true'));
+  }
+
+  function loadPreferences(mode) {
+    ({ savedEffort, savedModel } = preferencesForMode(savedSettings, mode));
+  }
+
+  function savePreference(mode, setting, value) {
+    const key = preferenceKey(mode, setting);
+    savedSettings[key] = value;
+    chrome.storage.local.set({ [key]: value });
   }
 
   function syncUrl(reload = false) {
@@ -159,19 +173,27 @@
       requestAnimationFrame(() => {
         if (!name || item.getAttribute('aria-checked') !== 'true') return;
         savedModel = name;
-        chrome.storage.local.set({ savedModel });
+        savePreference(selectedMode() || savedMode, 'model', savedModel);
         syncUrl();
       });
       return;
     }
 
     if (modeButtons().includes(event.target.closest('button'))) {
+      switchingMode = true;
       requestAnimationFrame(() => {
         const mode = selectedMode();
-        if (!mode) return;
+        if (!mode) {
+          switchingMode = false;
+          return;
+        }
         savedMode = mode;
+        loadPreferences(savedMode);
         chrome.storage.local.set({ savedMode });
         syncUrl();
+        switchingMode = false;
+        previousTrigger = undefined;
+        restoreSettings();
       });
     }
   }, true);
@@ -184,17 +206,25 @@
         const effort = Number(document.querySelector(effortSelector)?.getAttribute('aria-valuenow'));
         if (Number.isInteger(effort)) {
           savedEffort = effort;
-          chrome.storage.local.set({ savedEffort });
+          savePreference(selectedMode() || savedMode, 'effort', savedEffort);
         }
       }
     }
-    restoreSettings();
+    if (!switchingMode) restoreSettings();
   });
 
-  chrome.storage.local.get(['savedModel', 'savedEffort', 'savedMode']).then((settings) => {
-    savedModel = settings.savedModel;
-    savedEffort = settings.savedEffort;
+  chrome.storage.local.get([
+    'savedChatEffort',
+    'savedChatModel',
+    'savedCodexEffort',
+    'savedCodexModel',
+    'savedEffort',
+    'savedMode',
+    'savedModel',
+  ]).then((settings) => {
+    savedSettings = settings;
     savedMode = settings.savedMode;
+    loadPreferences(savedMode);
     if (syncUrl(true)) return;
     observer.observe(document.body, {
       childList: true,
