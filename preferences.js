@@ -7,11 +7,6 @@
     if (name === 'work' || name === 'codex') return 'codex';
   }
 
-  function modelSlug(name) {
-    if (!name || /^(default|デフォルト)$/i.test(name)) return null;
-    return name.toLowerCase().replace(/\s+/g, '-');
-  }
-
   function effortTarget(value, minimum, maximum) {
     return Math.min(maximum, Math.max(minimum, value));
   }
@@ -38,13 +33,11 @@
     };
   }
 
-  function preferencesUrl(href, { savedModel, savedMode }) {
+  // ChatGPT does not recognise model slugs derived from display names and resets the model
+  // to its default when it reads one, so only the mode is carried in the URL.
+  function preferencesUrl(href, { savedMode }) {
     const url = new URL(href);
     if (url.pathname !== '/') return href;
-
-    const slug = modelSlug(savedModel);
-    if (slug) url.searchParams.set('model', slug);
-    else if (savedModel) url.searchParams.delete('model');
 
     if (savedMode === 'codex') url.searchParams.set('surface', 'work');
     else if (savedMode === 'chat' && url.searchParams.get('surface') === 'work') {
@@ -59,7 +52,6 @@
     effortTarget,
     matchingModel,
     modeName,
-    modelSlug,
     preferenceKey,
     preferencesForMode,
     preferencesUrl,

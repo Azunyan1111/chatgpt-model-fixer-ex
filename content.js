@@ -11,6 +11,10 @@
   const triggerSelector = 'button[data-codex-intelligence-trigger="true"]';
   const itemSelector = '[role="menuitemradio"]';
   const effortSelector = '[data-model-picker-power-slider] [role="slider"]';
+  const urlAttemptKey = 'chatgptPreferencesUrlAttempt';
+  const triggerSettleMs = 500;
+  const triggerSeenAt = new WeakMap();
+  let deferredRestore;
   let savedModel;
   let savedEffort;
   let savedMode;
@@ -18,6 +22,8 @@
   let previousTrigger;
   let previousUrl;
   let restoring = false;
+  let interrupted = false;
+  let selectingModel = false;
   let switchingMode = false;
 
   const normalizedText = (element) => element?.textContent.trim();
@@ -48,15 +54,46 @@
   }
 
   function syncUrl(reload = false) {
-    const url = preferencesUrl(location.href, { savedModel, savedMode });
-    if (url === location.href) return false;
-    if (reload) location.replace(url);
-    else history.replaceState(history.state, '', url);
+    const url = preferencesUrl(location.href, { savedMode });
+    if (url === location.href) {
+      if (reload) sessionStorage.removeItem(urlAttemptKey);
+      return false;
+    }
+    if (reload) {
+      if (sessionStorage.getItem(urlAttemptKey) === url) {
+        sessionStorage.removeItem(urlAttemptKey);
+        return false;
+      }
+      sessionStorage.setItem(urlAttemptKey, url);
+      location.replace(url);
+    } else {
+      history.replaceState(history.state, '', url);
+      previousUrl = location.href;
+    }
     return true;
   }
 
+  const currentTrigger = () => document.querySelector(triggerSelector);
+
   function modelMenu(trigger) {
-    return document.getElementById(trigger.getAttribute('aria-controls'));
+    const id = trigger?.getAttribute('aria-controls');
+    return id ? document.getElementById(id) : null;
+  }
+
+  function openedModelMenu() {
+    const trigger = currentTrigger();
+    return trigger?.getAttribute('aria-expanded') === 'true' ? modelMenu(trigger) : null;
+  }
+
+  function hasSavedSettings() {
+    return Boolean(savedMode || savedModel || Number.isInteger(savedEffort));
+  }
+
+  // In Codex mode ChatGPT first renders a short-lived picker that still lists the Chat models,
+  // then replaces it, so only a trigger that has stayed in place for a while is restored.
+  function triggerIsSettling(trigger) {
+    if (!triggerSeenAt.has(trigger)) triggerSeenAt.set(trigger, performance.now());
+    return performance.now() - triggerSeenAt.get(trigger) < triggerSettleMs;
   }
 
   function waitFor(find, timeoutMs = 5000) {
@@ -80,40 +117,57 @@
     });
   }
 
-  function openModelMenu(trigger) {
-    if (trigger.getAttribute('aria-expanded') !== 'true') {
+  // ChatGPT ignores events dispatched before hydration, so repeat the action until it takes effect.
+  async function retry(action, find, timeoutMs = 10000) {
+    const deadline = Date.now() + timeoutMs;
+    while (!interrupted && Date.now() < deadline) {
+      const found = find();
+      if (found) return found;
+      action();
+      const value = await waitFor(find, 250);
+      if (value) return value;
+    }
+    return null;
+  }
+
+  function pressTrigger() {
+    const trigger = currentTrigger();
+    if (trigger && trigger.getAttribute('aria-expanded') !== 'true') {
       trigger.dispatchEvent(new PointerEvent('pointerdown', {
         bubbles: true, button: 0, pointerType: 'mouse', ctrlKey: false,
       }));
     }
-    return waitFor(() => modelMenu(trigger));
   }
+
+  const openModelMenu = () => retry(pressTrigger, openedModelMenu);
+
+  // ChatGPT may re-render or close the menu while it settles, so never keep a stale slider.
+  const effortSlider = () => openedModelMenu()?.querySelector(effortSelector);
 
   async function restoreMode() {
     if (!savedMode || selectedMode() === savedMode) return;
-    const button = modeButtons().find((candidate) => modeName(candidate) === savedMode);
-    if (!button) return;
-    button.click();
-    await waitFor(() => selectedMode() === savedMode);
+    const button = () => modeButtons().find((candidate) => modeName(candidate) === savedMode);
+    if (!button()) return;
+    await retry(() => button()?.click(), () => selectedMode() === savedMode);
   }
 
-  async function restoreModel(menu) {
+  async function restoreModel() {
     if (!savedModel) return;
-    const item = matchingModel(menu.querySelectorAll(itemSelector), savedModel, modelName);
+    const menu = await openModelMenu();
+    const item = menu && matchingModel(menu.querySelectorAll(itemSelector), savedModel, modelName);
     if (!item || item.getAttribute('aria-checked') === 'true') return;
     if (item.closest('[inert]')) {
       menu.querySelector('[data-model-picker-view-toggle]')?.click();
-      if (!await waitFor(() => !item.closest('[inert]'))) return;
+      if (!await waitFor(() => !item.closest('[inert]')) || interrupted) return;
     }
     item.click();
     await waitFor(() => item.getAttribute('aria-checked') === 'true' || !item.isConnected);
   }
 
-  async function restoreEffort(trigger) {
+  async function restoreEffort() {
     if (!Number.isInteger(savedEffort)) return;
-    const menu = await openModelMenu(trigger);
-    const slider = menu && await waitFor(() => menu.querySelector(effortSelector));
-    if (!menu || !slider) return;
+    let slider = await retry(pressTrigger, effortSlider);
+    if (!slider) return;
 
     const minimum = Number(slider.getAttribute('aria-valuemin'));
     const maximum = Number(slider.getAttribute('aria-valuemax'));
@@ -121,60 +175,79 @@
 
     for (let attempt = 0; attempt <= maximum - minimum; attempt += 1) {
       const current = Number(slider.getAttribute('aria-valuenow'));
-      if (current === target) return;
+      if (current === target || interrupted) return;
       const key = effortKey(current, target);
       slider.dispatchEvent(new KeyboardEvent('keydown', {
         key, code: key, bubbles: true, cancelable: true,
       }));
-      if (!await waitFor(
-        () => Number(slider.getAttribute('aria-valuenow')) !== current,
-        1000,
-      )) return;
+      slider = await retry(pressTrigger, () => {
+        const candidate = effortSlider();
+        return Number(candidate?.getAttribute('aria-valuenow')) !== current && candidate;
+      }, 1000);
+      if (!slider) return;
     }
   }
 
   async function restoreSettings() {
     if (restoring) return;
-    const initialTrigger = document.querySelector(triggerSelector);
+    const initialTrigger = currentTrigger();
     if (!initialTrigger) return;
     if (initialTrigger === previousTrigger && location.href === previousUrl) return;
+    if (hasSavedSettings() && (triggerIsSettling(initialTrigger) || openedModelMenu())) {
+      // Retry once the trigger has settled and the user has closed the menu.
+      clearTimeout(deferredRestore);
+      deferredRestore = setTimeout(restoreSettings, 250);
+      return;
+    }
     previousTrigger = initialTrigger;
     previousUrl = location.href;
+    if (!hasSavedSettings()) return;
     restoring = true;
+    interrupted = false;
 
     try {
       await restoreMode();
-      const trigger = document.querySelector(triggerSelector);
-      if (!trigger) return;
-      const wasOpen = trigger.getAttribute('aria-expanded') === 'true';
-      const menu = await openModelMenu(trigger);
-      if (!menu) return;
-      await restoreModel(menu);
-      await restoreEffort(document.querySelector(triggerSelector));
-      if (!wasOpen) {
-        modelMenu(document.querySelector(triggerSelector))?.dispatchEvent(
-          new KeyboardEvent('keydown', {
-            key: 'Escape', code: 'Escape', bubbles: true,
-          }),
-        );
+      if (!await openModelMenu()) return;
+      await restoreModel();
+      await restoreEffort();
+      if (!interrupted) {
+        openedModelMenu()?.dispatchEvent(new KeyboardEvent('keydown', {
+          key: 'Escape', code: 'Escape', bubbles: true,
+        }));
       }
     } finally {
+      // Restoring the mode can re-render the trigger; that must not start another restore.
+      if (!interrupted) previousTrigger = currentTrigger();
       restoring = false;
     }
   }
 
+  // Lets the live test wait, from this isolated world, until restoring has finished.
+  globalThis.ChatGPTModelFixer = {
+    isSettled: () => !restoring && !selectingModel && !switchingMode
+      && Boolean(currentTrigger())
+      && currentTrigger() === previousTrigger
+      && location.href === previousUrl,
+  };
+
   document.addEventListener('click', (event) => {
     if (!event.isTrusted) return;
     const item = event.target.closest(itemSelector);
-    const trigger = document.querySelector(triggerSelector);
+    const trigger = currentTrigger();
 
     if (item && trigger && modelMenu(trigger)?.contains(item)) {
+      selectingModel = true;
       const name = modelName(item);
       requestAnimationFrame(() => {
-        if (!name || item.getAttribute('aria-checked') !== 'true') return;
-        savedModel = name;
-        savePreference(selectedMode() || savedMode, 'model', savedModel);
-        syncUrl();
+        if (name && item.getAttribute('aria-checked') === 'true') {
+          savedModel = name;
+          savePreference(selectedMode() || savedMode, 'model', savedModel);
+        }
+        requestAnimationFrame(() => {
+          selectingModel = false;
+          previousTrigger = currentTrigger();
+          previousUrl = location.href;
+        });
       });
       return;
     }
@@ -198,19 +271,34 @@
     }
   }, true);
 
+  // A user who starts using the picker while settings are being restored takes over.
+  document.addEventListener('pointerdown', (event) => {
+    if (!restoring || !event.isTrusted) return;
+    const { target } = event;
+    if (currentTrigger()?.contains(target) || openedModelMenu()?.contains(target)
+      || modeButtons().some((button) => button.contains(target))) {
+      interrupted = true;
+    }
+  }, true);
+
   const observer = new MutationObserver((mutations) => {
-    if (!restoring) {
-      const effortChanged = mutations.some((mutation) =>
-        mutation.type === 'attributes' && mutation.target.matches?.(effortSelector));
+    if (!restoring || interrupted) {
+      // A slider that has just been rendered reports no previous value; only user changes count.
+      const effortChanged = [...mutations].reverse().find((mutation) =>
+        mutation.type === 'attributes'
+        && mutation.target.matches?.(effortSelector)
+        && mutation.oldValue !== null
+        && mutation.oldValue !== mutation.target.getAttribute('aria-valuenow')
+        && !mutation.target.closest('[inert]'));
       if (effortChanged) {
-        const effort = Number(document.querySelector(effortSelector)?.getAttribute('aria-valuenow'));
+        const effort = Number(effortChanged.target.getAttribute('aria-valuenow'));
         if (Number.isInteger(effort)) {
           savedEffort = effort;
           savePreference(selectedMode() || savedMode, 'effort', savedEffort);
         }
       }
     }
-    if (!switchingMode) restoreSettings();
+    if (!selectingModel && !switchingMode) restoreSettings();
   });
 
   chrome.storage.local.get([
@@ -231,6 +319,7 @@
       subtree: true,
       attributes: true,
       attributeFilter: ['aria-pressed', 'aria-valuenow'],
+      attributeOldValue: true,
     });
     restoreSettings();
   });

@@ -7,7 +7,6 @@ const {
   effortTarget,
   matchingModel,
   modeName,
-  modelSlug,
   preferenceKey,
   preferencesForMode,
   preferencesUrl,
@@ -31,12 +30,6 @@ test('ChatとCodexからそれぞれのモデルと努力量を取得する', ()
   });
   assert.equal(preferenceKey('chat', 'model'), 'savedChatModel');
   assert.equal(preferenceKey('codex', 'effort'), 'savedCodexEffort');
-});
-
-test('モデル名をURL用の値へ変換する', () => {
-  assert.equal(modelSlug('GPT-6.1 Sol'), 'gpt-6.1-sol');
-  assert.equal(modelSlug('Default'), null);
-  assert.equal(modelSlug('デフォルト'), null);
 });
 
 test('モデル一覧から保存したモデルを特定する', () => {
@@ -63,35 +56,29 @@ test('保存した努力量をモデルの選択可能範囲に収める', () =>
   assert.equal(effortTarget(4, 1, 3), 3);
 });
 
-test('モデルとCodexモードを新規チャットのURLへ反映する', () => {
-  const actual = preferencesUrl('https://chatgpt.com/?q=hello', {
-    savedModel: 'GPT-6.1 Sol',
-    savedMode: 'codex',
-  });
+test('Codexモードだけを新規チャットのURLへ反映し、モデルは指定しない', () => {
+  const actual = preferencesUrl('https://chatgpt.com/?q=hello', { savedMode: 'codex' });
   const url = new URL(actual);
 
-  assert.equal(url.searchParams.get('model'), 'gpt-6.1-sol');
   assert.equal(url.searchParams.get('surface'), 'work');
   assert.equal(url.searchParams.get('q'), 'hello');
+  assert.equal(url.searchParams.has('model'), false);
 });
 
 test('ChatモードではWork指定だけをURLから外す', () => {
   const actual = preferencesUrl(
-    'https://chatgpt.com/?model=gpt-6.1-sol&surface=work',
-    { savedModel: 'Default', savedMode: 'chat' },
+    'https://chatgpt.com/?model=gpt-6&surface=work',
+    { savedMode: 'chat' },
   );
   const url = new URL(actual);
 
-  assert.equal(url.searchParams.has('model'), false);
+  assert.equal(url.searchParams.get('model'), 'gpt-6');
   assert.equal(url.searchParams.has('surface'), false);
 });
 
 test('既存チャットのURLは変更しない', () => {
-  const current = 'https://chatgpt.com/c/123?model=gpt-6.1-sol';
-  assert.equal(preferencesUrl(current, {
-    savedModel: 'GPT-6 Astra',
-    savedMode: 'codex',
-  }), current);
+  const current = 'https://chatgpt.com/c/123?surface=chat';
+  assert.equal(preferencesUrl(current, { savedMode: 'codex' }), current);
 });
 
 test('共有ロジックをコンテンツスクリプトより先に読み込む', async () => {

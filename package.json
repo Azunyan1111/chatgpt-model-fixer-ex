@@ -4,7 +4,9 @@
   "private": true,
   "packageManager": "pnpm@10.20.0",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "test:unit": "node --test test/preferences.test.js",
+    "test:live": "node --test test/live.test.js"
   },
   "devDependencies": {
     "playwright": "^1.64.1"
