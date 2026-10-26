@@ -15,6 +15,20 @@ const sliderSelector = '[data-model-picker-power-slider] [role="slider"]';
 // A row can follow the model name with a description, such as デフォルト and おすすめのモデルセット.
 const modelNameSelector = '[data-menu-row-content] span';
 const pickerTimeout = 5000;
+const newChatLabel = /^\s*(新しいチャット|new chat)\s*$/i;
+
+// ChatGPT keeps the previous composer's picker button in the DOM, no longer rendered, after
+// navigating between a conversation and a new chat, so only the rendered button is read.
+const visibleTrigger = (page) => page.locator(`${triggerSelector}:visible`);
+
+function waitForClosedMenu(page) {
+  return page.waitForFunction((selector) => {
+    const triggers = [...document.querySelectorAll(selector)]
+      .filter((trigger) => trigger.getClientRects().length > 0);
+    return triggers.length > 0
+      && triggers.every((trigger) => trigger.getAttribute('aria-expanded') === 'false');
+  }, triggerSelector);
+}
 
 async function exists(target) {
   try {
@@ -169,7 +183,7 @@ async function selectMode(page, mode) {
 }
 
 async function openModelMenu(page) {
-  const trigger = page.locator(triggerSelector);
+  const trigger = visibleTrigger(page);
   if (await trigger.getAttribute('aria-expanded') !== 'true') await trigger.click();
   await trigger.evaluate((element) => {
     if (element.getAttribute('aria-expanded') !== 'true') {
@@ -284,9 +298,8 @@ async function selectEffort(menu, effort) {
 
 async function closeModelMenu(page) {
   await page.keyboard.press('Escape');
-  await page.locator(triggerSelector).waitFor({ state: 'visible' });
-  await page.waitForFunction((selector) =>
-    document.querySelector(selector)?.getAttribute('aria-expanded') === 'false', triggerSelector);
+  await visibleTrigger(page).waitFor({ state: 'visible' });
+  await waitForClosedMenu(page);
 }
 
 function currentSettings(page) {
@@ -333,8 +346,7 @@ async function waitForExtensionRestore(page) {
     else settledSince ??= Date.now();
     await page.waitForTimeout(100);
   }
-  await page.waitForFunction((selector) =>
-    document.querySelector(selector)?.getAttribute('aria-expanded') === 'false', triggerSelector);
+  await waitForClosedMenu(page);
 }
 
 const modeTitles = { chat: 'Chat', codex: 'Codex' };
@@ -432,6 +444,73 @@ describe('実際のChatGPT', async () => {
       }
     }
   }
+
+  // Records every mode the page shows while the extension reacts to a manual switch.
+  function recordModes(page, durationMs) {
+    return page.evaluate((duration) => new Promise((resolve) => {
+      const labels = { chat: /^\s*chat\s*$/i, codex: /^\s*(work|codex)\s*$/i };
+      const selected = () => {
+        for (const button of document.querySelectorAll('[role="group"] > button[aria-pressed="true"]')) {
+          for (const [mode, label] of Object.entries(labels)) {
+            if (label.test(button.textContent)) return mode;
+          }
+        }
+        return null;
+      };
+      const modes = [selected()];
+      const observer = new MutationObserver(() => {
+        const mode = selected();
+        if (mode && mode !== modes.at(-1)) modes.push(mode);
+      });
+      observer.observe(document.body, {
+        attributeFilter: ['aria-pressed'], attributes: true, childList: true, subtree: true,
+      });
+      setTimeout(() => {
+        observer.disconnect();
+        resolve(modes);
+      }, duration);
+    }), durationMs);
+  }
+
+  test('再読み込み後にWorkからChatへ手動で切り替えるとChatのまま安定する', async () => {
+    const codex = discovered.codex.at(-1);
+    const names = discovered.codex.map(({ model }) => model);
+    await selectSettings(page, 'codex', codex.model, codex.minimum);
+    await reloadUntilListed(page, names);
+    assert.equal(await selectedMode(page), 'codex');
+
+    await modeButton(page, 'chat').click();
+    const modes = await recordModes(page, 5000);
+    assert.deepEqual(modes, ['chat'], `ChatとWorkを往復しないこと: ${modes.join(' → ')}`);
+    await waitForExtensionRestore(page);
+    assert.equal(await selectedMode(page), 'chat');
+    assert.equal((await extensionStorage(page)).savedMode, 'chat');
+  });
+
+  test('会話を開いてから新しいチャットを押すと設定を復元する', async () => {
+    const chat = discovered.chat.at(-1);
+    await selectSettings(page, 'chat', chat.model, chat.maximum);
+
+    const conversation = page.locator('a[href^="/c/"]:visible').first();
+    await conversation.waitFor({ state: 'visible' });
+    await conversation.click();
+    await page.waitForURL(/\/c\//);
+    await waitForExtensionRestore(page);
+
+    await page.getByRole('button', { name: newChatLabel }).first().click();
+    await page.waitForURL(/^https:\/\/chatgpt\.com\/(\?.*)?$/);
+    await waitForExtensionRestore(page);
+    assert.deepEqual(await currentSettings(page), {
+      effort: chat.maximum,
+      mode: 'chat',
+      model: chat.model,
+    });
+    assert.equal(
+      await page.locator(`${triggerSelector}[aria-expanded="true"]`).count(),
+      0,
+      '描画されていないモデル選択ボタンのメニューを開いたままにしないこと',
+    );
+  });
 
   test('ChatとCodexを切り替えるとそれぞれの設定を復元する', async () => {
     const chat = discovered.chat.at(-1);

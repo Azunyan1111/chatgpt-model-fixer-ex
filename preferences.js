@@ -26,25 +26,17 @@
     return `saved${modeName}${settingName}`;
   }
 
+  // ChatGPT keeps the picker button of the previous composer in the DOM, no longer rendered,
+  // while it navigates between a conversation and a new chat; only a rendered one is in use.
+  function renderedElement(elements) {
+    return Array.from(elements).find((element) => element.getClientRects().length > 0) ?? null;
+  }
+
   function preferencesForMode(settings, mode) {
     return {
       savedEffort: settings[preferenceKey(mode, 'effort')] ?? settings.savedEffort,
       savedModel: settings[preferenceKey(mode, 'model')] ?? settings.savedModel,
     };
-  }
-
-  // ChatGPT does not recognise model slugs derived from display names and resets the model
-  // to its default when it reads one, so only the mode is carried in the URL.
-  function preferencesUrl(href, { savedMode }) {
-    const url = new URL(href);
-    if (url.pathname !== '/') return href;
-
-    if (savedMode === 'codex') url.searchParams.set('surface', 'work');
-    else if (savedMode === 'chat' && url.searchParams.get('surface') === 'work') {
-      url.searchParams.delete('surface');
-    }
-
-    return url.href;
   }
 
   const preferences = {
@@ -54,7 +46,7 @@
     modeName,
     preferenceKey,
     preferencesForMode,
-    preferencesUrl,
+    renderedElement,
   };
   root.ChatGPTPreferences = preferences;
 

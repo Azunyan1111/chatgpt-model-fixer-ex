@@ -6,12 +6,11 @@
     modeName,
     preferenceKey,
     preferencesForMode,
-    preferencesUrl,
+    renderedElement,
   } = globalThis.ChatGPTPreferences;
   const triggerSelector = 'button[data-codex-intelligence-trigger="true"]';
   const itemSelector = '[role="menuitemradio"]';
   const effortSelector = '[data-model-picker-power-slider] [role="slider"]';
-  const urlAttemptKey = 'chatgptPreferencesUrlAttempt';
   const triggerSettleMs = 500;
   const triggerSeenAt = new WeakMap();
   let deferredRestore;
@@ -53,27 +52,7 @@
     chrome.storage.local.set({ [key]: value });
   }
 
-  function syncUrl(reload = false) {
-    const url = preferencesUrl(location.href, { savedMode });
-    if (url === location.href) {
-      if (reload) sessionStorage.removeItem(urlAttemptKey);
-      return false;
-    }
-    if (reload) {
-      if (sessionStorage.getItem(urlAttemptKey) === url) {
-        sessionStorage.removeItem(urlAttemptKey);
-        return false;
-      }
-      sessionStorage.setItem(urlAttemptKey, url);
-      location.replace(url);
-    } else {
-      history.replaceState(history.state, '', url);
-      previousUrl = location.href;
-    }
-    return true;
-  }
-
-  const currentTrigger = () => document.querySelector(triggerSelector);
+  const currentTrigger = () => renderedElement(document.querySelectorAll(triggerSelector));
 
   function modelMenu(trigger) {
     const id = trigger?.getAttribute('aria-controls');
@@ -144,11 +123,13 @@
   // ChatGPT may re-render or close the menu while it settles, so never keep a stale slider.
   const effortSlider = () => openedModelMenu()?.querySelector(effortSelector);
 
+  // The mode is restored by pressing the Chat/Codex switch instead of reloading the page with
+  // a surface parameter in the URL. Returns whether the switch was pressed.
   async function restoreMode() {
-    if (!savedMode || selectedMode() === savedMode) return;
+    if (!savedMode || selectedMode() === savedMode) return false;
     const button = () => modeButtons().find((candidate) => modeName(candidate) === savedMode);
-    if (!button()) return;
-    await retry(() => button()?.click(), () => selectedMode() === savedMode);
+    if (!button()) return false;
+    return Boolean(await retry(() => button()?.click(), () => selectedMode() === savedMode));
   }
 
   async function restoreModel() {
@@ -204,9 +185,11 @@
     if (!hasSavedSettings()) return;
     restoring = true;
     interrupted = false;
+    let modeChanged = false;
 
     try {
-      await restoreMode();
+      modeChanged = await restoreMode();
+      if (modeChanged) return;
       if (!await openModelMenu()) return;
       await restoreModel();
       await restoreEffort();
@@ -216,9 +199,16 @@
         }));
       }
     } finally {
-      // Restoring the mode can re-render the trigger; that must not start another restore.
-      if (!interrupted) previousTrigger = currentTrigger();
       restoring = false;
+      if (modeChanged) {
+        // Switching the mode re-renders the picker, so the model and effort are restored
+        // once the new picker has settled, exactly as after a mode switch by the user.
+        previousTrigger = undefined;
+        restoreSettings();
+      } else if (!interrupted) {
+        // Restoring can re-render the trigger; that must not start another restore.
+        previousTrigger = currentTrigger();
+      }
     }
   }
 
@@ -263,7 +253,6 @@
         savedMode = mode;
         loadPreferences(savedMode);
         chrome.storage.local.set({ savedMode });
-        syncUrl();
         switchingMode = false;
         previousTrigger = undefined;
         restoreSettings();
@@ -313,7 +302,6 @@
     savedSettings = settings;
     savedMode = settings.savedMode;
     loadPreferences(savedMode);
-    if (syncUrl(true)) return;
     observer.observe(document.body, {
       childList: true,
       subtree: true,
