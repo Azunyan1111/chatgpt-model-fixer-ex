@@ -4,7 +4,7 @@ ChatGPTのChat／Codexモードごとに選んだモデルと努力量を別々�
 
 Chromeの拡張機能管理画面でデベロッパーモードを有効にし、「パッケージ化されていない拡張機能を読み込む」からこのディレクトリを選択してください。
 
-モード、モデル、努力量はすべて画面操作で選択し、URLパラメーターの書き換えやページの再読み込みは行いません。Chat／Codexモードは `aria-pressed` を持つ切替ボタンを押して復元し、モデル選択ボタンの `data-codex-intelligence-trigger`、モデル一覧の `role="menuitemradio"`、スライダーの `aria-valuenow` を使用してモデルと努力量を復元します。モードを切り替えた直後はモデル選択ボタンが置き換わるため、新しいボタンが落ち着いてからモデルと努力量を復元します。保存した選択肢が現在の画面にない場合は、その項目を変更しません。
+モード、モデル、努力量はすべて画面操作で選択し、URLパラメーターの書き換えやページの再読み込みは行いません。Chat／Codexモードは `aria-pressed` を持つ切替ボタンを押して復元し、モデル選択ボタンの `data-composer-navigation-target="reasoning"`、モデル一覧の `role="menuitemradio"`、スライダーの `aria-valuenow` を使用してモデルと努力量を復元します。モードを切り替えた直後はモデル選択ボタンが置き換わるため、新しいボタンが落ち着いてからモデルと努力量を復元します。保存した選択肢が現在の画面にない場合は、その項目を変更しません。
 
 URLパラメーターは使用しません。以前は `surface=work` を付けて再読み込みすることでCodexモードを開いていましたが、ページを開くたびに再読み込みが発生して煩わしく、また表示名から作った `model=gpt-5.6-sol` のような値をChatGPTは認識せず、読み取った後にURLから取り除いてモデルを既定値へ戻すため、画面操作で選んだモデルを上書きしてしまうからです。
 
@@ -18,7 +18,7 @@ Node.js 22とpnpmを用意し、次のコマンドを実行します。
 
 ```sh
 pnpm install --frozen-lockfile
-pnpm exec playwright install chromium
+pnpm exec patchright install chromium
 pnpm run test
 ```
 
@@ -28,7 +28,7 @@ pnpm run test
 node --test --test-name-pattern="Codex／デフォルト／努力量1" test/live.test.js
 ```
 
-実行時依存はありません。開発時のみPlaywrightを使用します。初回のテストだけ、macOS版Chromeの `Default` プロファイルからChatGPTのセッションに必要なデータをGit管理外の `.chrome-profile/` へ複製し、その複製を積んだChromeでセッションを読み取ります。元のChromeプロファイルは変更しません。
+実行時依存はありません。開発時のみ、Playwright互換のpatchrightを使用します。Playwrightが操作するChromiumは、CDP経由で `navigator.webdriver` が真になるなどの痕跡からChatGPTのCloudflareの確認画面で止まるため、同じChromiumを痕跡を残さずに操作するpatchrightを使用します。初回のテストだけ、macOS版Chromeの `Default` プロファイルからChatGPTのセッションに必要なデータをGit管理外の `.chrome-profile/` へ複製し、その複製を積んだChromeでセッションを読み取ります。元のChromeプロファイルは変更しません。
 
 現在のGoogle Chromeは未パッケージ拡張機能を読み込むコマンドライン引数を受け付けないため、復号済みのセッションを、拡張機能を読み込んだPlaywright同梱Chromiumの `.chromium-profile/` へ渡して `https://chatgpt.com/` を操作します。
 

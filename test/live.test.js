@@ -5,12 +5,12 @@ const path = require('node:path');
 const { after, describe, test } = require('node:test');
 const { isDeepStrictEqual } = require('node:util');
 
-const { chromium } = require('playwright');
+const { chromium } = require('patchright');
 
 const extensionPath = path.resolve(__dirname, '..');
 const chromeProfilePath = path.resolve(extensionPath, '.chrome-profile');
 const chromiumProfilePath = path.resolve(extensionPath, '.chromium-profile');
-const triggerSelector = 'button[data-codex-intelligence-trigger="true"]';
+const triggerSelector = 'button[data-composer-navigation-target="reasoning"]';
 const sliderSelector = '[data-model-picker-power-slider] [role="slider"]';
 // A row can follow the model name with a description, such as デフォルト and おすすめのモデルセット.
 const modelNameSelector = '[data-menu-row-content] span';

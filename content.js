@@ -8,7 +8,7 @@
     preferencesForMode,
     renderedElement,
   } = globalThis.ChatGPTPreferences;
-  const triggerSelector = 'button[data-codex-intelligence-trigger="true"]';
+  const triggerSelector = 'button[data-composer-navigation-target="reasoning"]';
   const itemSelector = '[role="menuitemradio"]';
   const effortSelector = '[data-model-picker-power-slider] [role="slider"]';
   const triggerSettleMs = 500;
